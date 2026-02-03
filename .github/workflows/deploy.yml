@@ -1,0 +1,78 @@
+name: Build & Deploy Frontend
+
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        run: |
+          aws ecr get-login-password \
+          | docker login \
+            --username AWS \
+            --password-stdin ${{ secrets.ECR_REGISTRY }}
+
+      - name: Build Docker image (WITH VITE ENV)
+        run: |
+          docker build \
+            --build-arg VITE_API_URL=${{ vars.VITE_API_URL }} \
+            -t test-frontend .
+
+      - name: Tag Docker image
+        run: |
+          docker tag test-frontend \
+          ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
+
+      - name: Push Docker image
+        run: |
+          docker push \
+          ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          script: |
+            echo "Login to ECR"
+            aws ecr get-login-password --region ${{ secrets.AWS_REGION }} \
+              | docker login --username AWS --password-stdin ${{ secrets.ECR_REGISTRY }}
+
+            echo "Stop old frontend container"
+            docker stop test-frontend || true
+            docker rm test-frontend || true
+
+            echo "Pull latest frontend image"
+            docker pull \
+              ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
+
+            echo "Run frontend container"
+            docker run -d \
+              --name test-frontend \
+              -p 80:80 \
+              --restart unless-stopped \
+              ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
+
+            echo "Cleanup"
+            docker image prune -af
