@@ -72,6 +72,7 @@ jobs:
               --name test-frontend \
               -p 80:80 \
               --restart unless-stopped \
+              --add-host=host.docker.internal:host-gateway \
               ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
 
             echo "Cleanup"
